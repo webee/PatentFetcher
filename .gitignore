@@ -4,7 +4,7 @@
 *.dll
 *.so
 *.dylib
-/PatentFetcher
+/patentfetcher
 /cmd_*
 
 # golang
@@ -26,6 +26,7 @@ debug
 .config.json
 
 # Test files.
+files/
 null/
 test/
 test.*
