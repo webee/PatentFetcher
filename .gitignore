@@ -1,0 +1,31 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/PatentFetcher
+/cmd_*
+
+# golang
+/vendor/
+
+# Test binary, build with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Editor
+.vscode
+
+# Debug
+debug
+.env
+.config.yml
+.config.json
+
+# Test files.
+null/
+test/
+test.*
