@@ -38,7 +38,7 @@ var (
 
 func init() {
 	// logger
-	log.SetLevel(logrus.DebugLevel)
+	log.SetLevel(logrus.InfoLevel)
 	log.SetFormatter(&logrus.TextFormatter{
 		ForceColors:   true,
 		FullTimestamp: true,
@@ -139,8 +139,9 @@ func checkAssignedPages() {
 			}
 		}
 		if expired > 0 {
-			// from start
-			minUnfinishedPage = minExpiredPage
+			if minExpiredPage < minUnfinishedPage {
+				minUnfinishedPage = minExpiredPage
+			}
 		}
 		lock.Unlock()
 		log.WithFields(logrus.Fields{"expired": expired, "minUnfinishedPage": minUnfinishedPage}).Info("checkAssignedPages")
@@ -148,6 +149,8 @@ func checkAssignedPages() {
 }
 
 func writeResults() {
+	startAt := time.Now()
+	count := 0
 	for res := range resultsChannel {
 		if finishedPages.Has(res.Page) {
 			log.WithFields(logrus.Fields{"page": res.Page, "warn": "already finished"}).Warn("writeResults")
@@ -170,6 +173,16 @@ func writeResults() {
 		f.Close()
 
 		markAssignedFinished(res.Page)
+
+		// stat
+		count++
+		tn := time.Now()
+		d := tn.Sub(startAt)
+		if d > 10*time.Second {
+			log.Infof("Rate: %f/s", float64(count)/(float64(d)/float64(time.Second)))
+			startAt = tn
+			count = 0
+		}
 	}
 }
 

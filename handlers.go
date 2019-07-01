@@ -38,7 +38,7 @@ var (
 func applyForTask(c echo.Context) error {
 	task := &Task{
 		Project: proj,
-		Pages:   assignPages(2, maxPage),
+		Pages:   assignPages(3, maxPage),
 	}
 	return c.JSON(http.StatusOK, task)
 }
