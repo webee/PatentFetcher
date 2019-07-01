@@ -19,21 +19,30 @@ import (
 type (
 	// Status is the status of application
 	Status struct {
-		Startup time.Time `json:"startup"`
+		Startup time.Time    `json:"startup"`
+		Fetcher *FetcherInfo `json:"fetcher"`
+	}
+
+	// FetcherInfo is fetcher's info
+	FetcherInfo struct {
+		finishedPages  *BitSet
+		resultsChannel chan *Result
+		// assignPages
+		lock              sync.Mutex
+		assignedPages     map[int]*time.Time
+		MinUnfinishedPage int     `json:"minUnifinishedPage"`
+		Rate              float64 `json:"rate"`
 	}
 )
 
 var (
-	log            = logrus.New()
-	config         = new(Config)
-	status         = new(Status)
-	finishedPages  *BitSet
-	resultsChannel = make(chan *Result, 100)
-
-	// assignPages
-	lock              sync.Mutex
-	assignedPages     = make(map[int]*time.Time, 1000)
-	minUnfinishedPage int
+	log         = logrus.New()
+	config      = new(Config)
+	status      = new(Status)
+	fetcherInfo = &FetcherInfo{
+		resultsChannel: make(chan *Result, 100),
+		assignedPages:  make(map[int]*time.Time, 1000),
+	}
 )
 
 func init() {
@@ -46,10 +55,12 @@ func init() {
 
 	// config
 	xconfig.Load(config)
+
+	status.Fetcher = fetcherInfo
 	// load finished pages bit set
-	finishedPages = loadFinishedPages()
+	fetcherInfo.finishedPages = loadFinishedPages()
 	// minUnfinishedPage
-	minUnfinishedPage = finishedPages.MinNotExistsFrom(0)
+	fetcherInfo.MinUnfinishedPage = fetcherInfo.finishedPages.MinNotExistsFrom(0)
 }
 
 func loadFinishedPages() *BitSet {
@@ -79,9 +90,9 @@ func main() {
 	StartPProfListen(":6060")
 
 	// workers
-	go updatePagesFile()
-	go writeResults()
-	go checkAssignedPages()
+	go fetcherInfo.updatePagesFile()
+	go fetcherInfo.writeResults()
+	go fetcherInfo.checkAssignedPages()
 
 	e := echo.New()
 
@@ -110,7 +121,8 @@ func getStatus(c echo.Context) error {
 	return c.JSON(http.StatusOK, status)
 }
 
-func updatePagesFile() {
+func (f *FetcherInfo) updatePagesFile() {
+	finishedPages := f.finishedPages
 	ticker := time.NewTicker(15 * time.Second)
 	for range ticker.C {
 		if err := ioutil.WriteFile(config.PagesFilePath, finishedPages.Bytes(), 0644); err != nil {
@@ -121,15 +133,16 @@ func updatePagesFile() {
 	}
 }
 
-func checkAssignedPages() {
-	ticker := time.NewTicker(15 * time.Second)
+func (f *FetcherInfo) checkAssignedPages() {
+	assignedPages := f.assignedPages
+	ticker := time.NewTicker(20 * time.Second)
 	for range ticker.C {
-		lock.Lock()
+		f.lock.Lock()
 		expired := 0
 		minExpiredPage := maxPage + 1
 		nt := time.Now()
 		for p, t := range assignedPages {
-			if nt.After(t.Add(15 * time.Second)) {
+			if nt.After(t.Add(20 * time.Second)) {
 				expired++
 				// expired
 				delete(assignedPages, p)
@@ -139,72 +152,78 @@ func checkAssignedPages() {
 			}
 		}
 		if expired > 0 {
-			if minExpiredPage < minUnfinishedPage {
-				minUnfinishedPage = minExpiredPage
+			if minExpiredPage < f.MinUnfinishedPage {
+				f.MinUnfinishedPage = minExpiredPage
 			}
 		}
-		lock.Unlock()
-		log.WithFields(logrus.Fields{"expired": expired, "minUnfinishedPage": minUnfinishedPage}).Info("checkAssignedPages")
+		f.lock.Unlock()
+		log.WithFields(logrus.Fields{"expired": expired, "minUnfinishedPage": f.MinUnfinishedPage}).Info("checkAssignedPages")
 	}
 }
 
-func writeResults() {
+func (f *FetcherInfo) writeResults() {
 	startAt := time.Now()
 	count := 0
-	for res := range resultsChannel {
-		if finishedPages.Has(res.Page) {
+	for res := range f.resultsChannel {
+		if f.finishedPages.Has(res.Page) {
 			log.WithFields(logrus.Fields{"page": res.Page, "warn": "already finished"}).Warn("writeResults")
+			continue
+		}
+		if len(res.Content) < 10 {
+			// 10 是随便选择的，内容长度不会小于10
+			log.WithFields(logrus.Fields{"page": res.Page, "warn": "request failed"}).Warn("writeResults")
 			continue
 		}
 
 		idx := res.Page / 10000
 		path := config.ResultDirPath + strconv.Itoa(idx)
-		f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+		resultFile, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 		if err != nil {
 			log.WithError(err).WithFields(logrus.Fields{"file": path, "page": res.Page}).Error("writeResults")
-			f.Close()
+			resultFile.Close()
 			continue
 		}
-		if _, err := io.WriteString(f, res.Content); err != nil {
+		if _, err := io.WriteString(resultFile, res.Content); err != nil {
 			log.WithError(err).WithFields(logrus.Fields{"file": path, "page": res.Page}).Error("writeResults")
-			f.Close()
+			resultFile.Close()
 			continue
 		}
-		f.Close()
+		resultFile.Close()
 
-		markAssignedFinished(res.Page)
+		f.markAssignedFinished(res.Page)
 
 		// stat
 		count++
 		tn := time.Now()
 		d := tn.Sub(startAt)
-		if d > 10*time.Second {
-			log.Infof("Rate: %f/s", float64(count)/(float64(d)/float64(time.Second)))
+		if d > 15*time.Second {
+			f.Rate = float64(count) / (float64(d) / float64(time.Second))
+			log.Infof("Rate: %f/s", f.Rate)
 			startAt = tn
 			count = 0
 		}
 	}
 }
 
-func markAssignedFinished(p int) {
+func (f *FetcherInfo) markAssignedFinished(p int) {
 	// add page
-	finishedPages.Add(p)
+	f.finishedPages.Add(p)
 
-	lock.Lock()
-	delete(assignedPages, p)
-	lock.Unlock()
+	f.lock.Lock()
+	delete(f.assignedPages, p)
+	f.lock.Unlock()
 }
 
-func assignPages(n int, maxPage int) []int {
-	lock.Lock()
-	minPage := minUnfinishedPage
-	lock.Unlock()
+func (f *FetcherInfo) assignPages(n int, maxPage int) []int {
+	f.lock.Lock()
+	minPage := f.MinUnfinishedPage
 
 	pages := make([]int, 0, n)
 ASSIGNING:
 	for i := 0; i < n; i++ {
-		for finishedPages.Has(minPage) {
-			minPage = finishedPages.MinNotExistsFrom(minPage + 1)
+		for f.finishedPages.Has(minPage) || f.assignedPages[minPage] != nil {
+			// 已完成或已分配
+			minPage = f.finishedPages.MinNotExistsFrom(minPage + 1)
 		}
 		if minPage > maxPage {
 			break ASSIGNING
@@ -213,11 +232,10 @@ ASSIGNING:
 		minPage++
 	}
 	t := time.Now()
-	lock.Lock()
 	for _, p := range pages {
-		assignedPages[p] = &t
+		f.assignedPages[p] = &t
 	}
-	minUnfinishedPage = minPage
-	lock.Unlock()
+	f.MinUnfinishedPage = minPage
+	f.lock.Unlock()
 	return pages
 }

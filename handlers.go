@@ -38,7 +38,7 @@ var (
 func applyForTask(c echo.Context) error {
 	task := &Task{
 		Project: proj,
-		Pages:   assignPages(3, maxPage),
+		Pages:   fetcherInfo.assignPages(3, maxPage),
 	}
 	return c.JSON(http.StatusOK, task)
 }
@@ -49,6 +49,6 @@ func submitTaskResult(c echo.Context) (err error) {
 		return
 	}
 
-	resultsChannel <- res
+	fetcherInfo.resultsChannel <- res
 	return c.NoContent(http.StatusNoContent)
 }
