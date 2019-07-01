@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
@@ -30,7 +31,7 @@ type (
 		// assignPages
 		lock              sync.Mutex
 		assignedPages     map[int]*time.Time
-		MinUnfinishedPage int     `json:"minUnifinishedPage"`
+		MinUnfinishedPage int     `json:"minUnfinishedPage"`
 		Rate              float64 `json:"rate"`
 	}
 )
@@ -179,6 +180,12 @@ func (f *FetcherInfo) writeResults() {
 		path := config.ResultDirPath + strconv.Itoa(idx)
 		resultFile, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 		if err != nil {
+			log.WithError(err).WithFields(logrus.Fields{"file": path, "page": res.Page}).Error("writeResults")
+			resultFile.Close()
+			continue
+		}
+		// 在每页数据前加上页数，方便之后检查
+		if _, err := io.WriteString(resultFile, fmt.Sprintf("#%d\n", res.Page)); err != nil {
 			log.WithError(err).WithFields(logrus.Fields{"file": path, "page": res.Page}).Error("writeResults")
 			resultFile.Close()
 			continue
