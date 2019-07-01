@@ -26,13 +26,13 @@ type (
 
 	// FetcherInfo is fetcher's info
 	FetcherInfo struct {
-		finishedPages  *BitSet
-		resultsChannel chan *Result
+		resultsChannel chan *Result // 提交结果通道
+		finishedPages  *BitSet      // 已完成
 		// assignPages
 		lock              sync.Mutex
-		assignedPages     map[int]*time.Time
-		MinUnfinishedPage int     `json:"minUnfinishedPage"`
-		Rate              float64 `json:"rate"`
+		assignedPages     map[int]*time.Time // 已分配
+		MinUnfinishedPage int                `json:"minUnfinishedPage"` // 最小未分配位置
+		Rate              float64            `json:"rate"`              // 完成速率
 	}
 )
 
@@ -122,6 +122,7 @@ func getStatus(c echo.Context) error {
 	return c.JSON(http.StatusOK, status)
 }
 
+// 持久化已完成BitMap数据
 func (f *FetcherInfo) updatePagesFile() {
 	finishedPages := f.finishedPages
 	ticker := time.NewTicker(15 * time.Second)
@@ -134,6 +135,7 @@ func (f *FetcherInfo) updatePagesFile() {
 	}
 }
 
+// 检查已分配任务是否超时
 func (f *FetcherInfo) checkAssignedPages() {
 	assignedPages := f.assignedPages
 	ticker := time.NewTicker(20 * time.Second)
@@ -162,6 +164,7 @@ func (f *FetcherInfo) checkAssignedPages() {
 	}
 }
 
+// 处理提交结果，并标记为已完成
 func (f *FetcherInfo) writeResults() {
 	startAt := time.Now()
 	count := 0
@@ -221,6 +224,7 @@ func (f *FetcherInfo) markAssignedFinished(p int) {
 	f.lock.Unlock()
 }
 
+// 任务分配：由小到大分配
 func (f *FetcherInfo) assignPages(n int, maxPage int) []int {
 	f.lock.Lock()
 	minPage := f.MinUnfinishedPage
