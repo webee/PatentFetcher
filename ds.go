@@ -26,6 +26,8 @@ func NewBitSetFromBytes(bs []byte) *BitSet {
 
 // Bytes get the underline bytes
 func (s *BitSet) Bytes() []byte {
+	s.RLock()
+	defer s.RUnlock()
 	bs := make([]byte, len(s.bytes))
 	copy(bs, s.bytes)
 	return bs
@@ -65,12 +67,12 @@ func (s *BitSet) Del(x int) {
 func (s *BitSet) Union(t *BitSet) {
 	s.Lock()
 	defer s.Unlock()
-	for i, tb := range t.bytes {
-		if i < len(s.bytes) {
-			s.bytes[i] |= tb
-		} else {
-			s.bytes = append(s.bytes, tb)
-		}
+	var idx int
+	for idx = 0; idx < len(s.bytes); idx++ {
+		s.bytes[idx] |= t.bytes[idx]
+	}
+	if idx < len(t.bytes) {
+		s.bytes = append(s.bytes, t.bytes[idx:]...)
 	}
 }
 
